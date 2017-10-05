@@ -15,7 +15,7 @@ from torch.autograd import Variable
 
 
 parser = argparse.ArgumentParser()
-parser.add_argument('--dataset', required=True, help='cifar10 | lsun | imagenet | folder | lfw ')
+parser.add_argument('--dataset', required=True, help='cifar10 | lsun | imagenet | folder | lfw | fake')
 parser.add_argument('--dataroot', required=True, help='path to dataset')
 parser.add_argument('--workers', type=int, help='number of data loading workers', default=2)
 parser.add_argument('--batchSize', type=int, default=64, help='input batch size')
@@ -77,8 +77,10 @@ elif opt.dataset == 'cifar10':
                                transforms.Scale(opt.imageSize),
                                transforms.ToTensor(),
                                transforms.Normalize((0.5, 0.5, 0.5), (0.5, 0.5, 0.5)),
-                           ])
-    )
+                           ]))
+elif opt.dataset == 'fake':
+    dataset = dset.FakeData(image_size=(3, opt.imageSize, opt.imageSize),
+                            transform=transforms.ToTensor())
 assert dataset
 dataloader = torch.utils.data.DataLoader(dataset, batch_size=opt.batchSize,
                                          shuffle=True, num_workers=int(opt.workers))
@@ -173,7 +175,7 @@ class _netD(nn.Module):
         else:
             output = self.main(input)
 
-        return output.view(-1, 1)
+        return output.view(-1, 1).squeeze(1)
 
 
 netD = _netD(ngpu)
@@ -198,9 +200,6 @@ if opt.cuda:
     input, label = input.cuda(), label.cuda()
     noise, fixed_noise = noise.cuda(), fixed_noise.cuda()
 
-input = Variable(input)
-label = Variable(label)
-noise = Variable(noise)
 fixed_noise = Variable(fixed_noise)
 
 # setup optimizer
@@ -216,21 +215,25 @@ for epoch in range(opt.niter):
         netD.zero_grad()
         real_cpu, _ = data
         batch_size = real_cpu.size(0)
-        input.data.resize_(real_cpu.size()).copy_(real_cpu)
-        label.data.resize_(batch_size).fill_(real_label)
+        if opt.cuda:
+            real_cpu = real_cpu.cuda()
+        input.resize_as_(real_cpu).copy_(real_cpu)
+        label.resize_(batch_size).fill_(real_label)
+        inputv = Variable(input)
+        labelv = Variable(label)
 
-        output = netD(input)
-        errD_real = criterion(output, label)
+        output = netD(inputv)
+        errD_real = criterion(output, labelv)
         errD_real.backward()
         D_x = output.data.mean()
 
         # train with fake
-        noise.data.resize_(batch_size, nz, 1, 1)
-        noise.data.normal_(0, 1)
-        fake = netG(noise)
-        label.data.fill_(fake_label)
+        noise.resize_(batch_size, nz, 1, 1).normal_(0, 1)
+        noisev = Variable(noise)
+        fake = netG(noisev)
+        labelv = Variable(label.fill_(fake_label))
         output = netD(fake.detach())
-        errD_fake = criterion(output, label)
+        errD_fake = criterion(output, labelv)
         errD_fake.backward()
         D_G_z1 = output.data.mean()
         errD = errD_real + errD_fake
@@ -240,9 +243,9 @@ for epoch in range(opt.niter):
         # (2) Update G network: maximize log(D(G(z)))
         ###########################
         netG.zero_grad()
-        label.data.fill_(real_label)  # fake labels are real for generator cost
+        labelv = Variable(label.fill_(real_label))  # fake labels are real for generator cost
         output = netD(fake)
-        errG = criterion(output, label)
+        errG = criterion(output, labelv)
         errG.backward()
         D_G_z2 = output.data.mean()
         optimizerG.step()

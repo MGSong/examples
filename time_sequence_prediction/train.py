@@ -1,6 +1,6 @@
 from __future__ import print_function
 import torch
-import torch.nn as nn 
+import torch.nn as nn
 from torch.autograd import Variable
 import torch.optim as optim
 import numpy as np
@@ -23,12 +23,12 @@ class Sequence(nn.Module):
 
         for i, input_t in enumerate(input.chunk(input.size(1), dim=1)):
             h_t, c_t = self.lstm1(input_t, (h_t, c_t))
-            h_t2, c_t2 = self.lstm2(c_t, (h_t2, c_t2))
-            outputs += [c_t2]
+            h_t2, c_t2 = self.lstm2(h_t, (h_t2, c_t2))
+            outputs += [h_t2]
         for i in range(future):# if we should predict the future
-            h_t, c_t = self.lstm1(c_t2, (h_t, c_t))
-            h_t2, c_t2 = self.lstm2(c_t, (h_t2, c_t2))
-            outputs += [c_t2]
+            h_t, c_t = self.lstm1(h_t2, (h_t, c_t))
+            h_t2, c_t2 = self.lstm2(h_t, (h_t2, c_t2))
+            outputs += [h_t2]
         outputs = torch.stack(outputs, 1).squeeze(2)
         return outputs
 
@@ -42,12 +42,14 @@ if __name__ == '__main__':
     data = torch.load('traindata.pt')
     input = Variable(torch.from_numpy(data[3:, :-1]), requires_grad=False)
     target = Variable(torch.from_numpy(data[3:, 1:]), requires_grad=False)
+    test_input = Variable(torch.from_numpy(data[:3, :-1]), requires_grad=False)
+    test_target = Variable(torch.from_numpy(data[:3, 1:]), requires_grad=False)
     # build the model
     seq = Sequence()
     seq.double()
     criterion = nn.MSELoss()
     # use LBFGS as optimizer since we can load the whole data to train
-    optimizer = optim.LBFGS(seq.parameters())
+    optimizer = optim.LBFGS(seq.parameters(), lr=0.8)
     #begin to train
     for i in range(15):
         print('STEP: ', i)
@@ -61,11 +63,13 @@ if __name__ == '__main__':
         optimizer.step(closure)
         # begin to predict
         future = 1000
-        pred = seq(input[:3], future = future)
+        pred = seq(test_input, future = future)
+        loss = criterion(pred[:, :-future], test_target)
+        print('test loss:', loss.data.numpy()[0])
         y = pred.data.numpy()
         # draw the result
         plt.figure(figsize=(30,10))
-        plt.title('Predict future values for time sequences\n(Dashlines are predicted values)', fontsize=30) 
+        plt.title('Predict future values for time sequences\n(Dashlines are predicted values)', fontsize=30)
         plt.xlabel('x', fontsize=20)
         plt.ylabel('y', fontsize=20)
         plt.xticks(fontsize=20)
@@ -78,4 +82,3 @@ if __name__ == '__main__':
         draw(y[2], 'b')
         plt.savefig('predict%d.pdf'%i)
         plt.close()
-
