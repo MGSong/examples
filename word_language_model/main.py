@@ -40,7 +40,7 @@ parser.add_argument('--cuda', action='store_true',
                     help='use CUDA')
 parser.add_argument('--loss', type=str, default='ce',
                     help='ce|nce')
-parser.add_argument('--num_noise', type=int, default=25,
+parser.add_argument('--num_noise', type=int, default=64,
                     help='number of noise samples per target for nce')
 parser.add_argument('--log-interval', type=int, default=200, metavar='N',
                     help='report interval')
@@ -69,8 +69,8 @@ def batchify(data, bsz):
     data = data.narrow(0, 0, nbatch * bsz)
     # Evenly divide the data across the bsz batches.
     data = data.view(bsz, -1).t().contiguous()
-    if args.cuda:
-        data = data.cuda()
+    #if args.cuda:
+    #    data = data.cuda()
     return data
 
 eval_batch_size = 10
@@ -103,6 +103,7 @@ def repackage_hidden(h):
     """Wraps hidden states in new Variables, to detach them from their history."""
     if type(h) == Variable:
         return Variable(h.data)
+        #return Variable(h.data.zero_())
     else:
         return tuple(repackage_hidden(v) for v in h)
 
@@ -111,7 +112,7 @@ def get_batch(source, i, evaluation=False):
     seq_len = min(args.bptt, len(source) - 1 - i)
     data = Variable(source[i:i+seq_len], volatile=evaluation)
     target = Variable(source[i+1:i+1+seq_len].view(-1))
-    return data, target
+    return data.cuda(), target.cuda()
 
 
 def evaluate(data_source):
@@ -119,6 +120,7 @@ def evaluate(data_source):
     model.eval()
     model.set_mode('eval')   # TODO: clean this up
     total_loss = 0
+    total_words = 0
     ntokens = len(corpus.dictionary)
     hidden = model.init_hidden(eval_batch_size)
     for i in range(0, data_source.size(0) - 1, args.bptt):
@@ -126,11 +128,12 @@ def evaluate(data_source):
         output, hidden = model(data, hidden)
         output_flat = output.view(-1, ntokens)
         if args.loss == 'nce':
-            total_loss += len(data) * criterion_test(output_flat, targets).data
+            total_loss += len(output_flat) * criterion_test(output_flat, targets).data
         else:
-            total_loss += len(data) * criterion(output_flat, targets).data
+            total_loss += len(output_flat) * criterion(output_flat, targets).data
+        total_words += len(output_flat)
         hidden = repackage_hidden(hidden)
-    return total_loss[0] / len(data_source)
+    return total_loss[0] / total_words
 
 
 def train():
